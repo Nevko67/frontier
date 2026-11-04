@@ -1,0 +1,3 @@
+/api/* https://frontier-crowns-v5.meshedfolio.chatgpt.site/api/:splat 200!
+/ERROR.html https://frontier-crowns-v5.meshedfolio.chatgpt.site/ERROR.html 200!
+/control.js https://frontier-crowns-v5.meshedfolio.chatgpt.site/control.js 200!
