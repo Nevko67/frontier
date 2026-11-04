@@ -1,0 +1,11 @@
+(()=>{
+ const defaults={friendlyColor:'#8cc5df',enemyColor:'#e69883',unitDesign:'classic',grid:false,minimap:true,style:'forest',background:'#0b100e'};let saved={};try{saved=JSON.parse(localStorage.getItem('frontier-appearance')||'{}')||{}}catch{}
+ const validColor=(v,f)=>/^#[0-9a-f]{6}$/i.test(v||'')?v:f;const options=window.FrontierAppearance={friendlyColor:validColor(saved.friendlyColor,defaults.friendlyColor),enemyColor:validColor(saved.enemyColor,defaults.enemyColor),unitDesign:['classic','heraldic','tactical'].includes(saved.unitDesign)?saved.unitDesign:'classic',grid:saved.grid===true,minimap:saved.minimap!==false,style:['forest','parchment','slate'].includes(saved.style)?saved.style:'forest',background:/^#[0-9a-f]{6}$/i.test(saved.background)?saved.background:defaults.background};
+ const $=id=>document.getElementById(id),dialog=$('appearanceSettings');
+ function sync(){for(const id of ['friendlyColor','enemyColor','unitDesign'])$(id).value=options[id];$('showMinimap').checked=options.minimap;$('minimapPanel').hidden=!options.minimap;$('enableMinimap').hidden=options.minimap;$('showGrid').checked=options.grid;$('mapStyle').value=options.style;$('mapBackground').value=options.background;document.querySelector('main').style.background=options.background}
+ function save(){try{localStorage.setItem('frontier-appearance',JSON.stringify(options))}catch{}sync()}
+ $('settingsButton').onclick=()=>{sync();dialog.showModal()};$('closeAppearance').onclick=()=>dialog.close();
+ for(const id of ['friendlyColor','enemyColor'])$(id).oninput=e=>{options[id]=e.target.value;save()};$('unitDesign').onchange=e=>{options.unitDesign=e.target.value;save()};$('showMinimap').onchange=e=>{options.minimap=e.target.checked;save()};$('hideMinimap').onclick=()=>{options.minimap=false;save()};$('enableMinimap').onclick=()=>{options.minimap=true;save()};$('showGrid').onchange=e=>{options.grid=e.target.checked;save()};$('mapStyle').onchange=e=>{options.style=e.target.value;save()};$('mapBackground').oninput=e=>{options.background=e.target.value;save()};$('resetAppearance').onclick=()=>{Object.assign(options,defaults);save()};sync();
+ document.getElementById('introSettings').onclick=()=>{sync();dialog.showModal()};
+})();
+
