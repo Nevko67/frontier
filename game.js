@@ -55,7 +55,17 @@ function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(S
  for(const e of state.entities)claim(e,TYPES[e.type].claim,TYPES[e.type].speed?1:2);for(const n of state.sites)if(n.owner>=0)claim({...n,side:n.owner},3,1);
  // War remembers only uncovered land. Active claims still use the normal priority rules.
  if(state.gameMode==='war')for(let i=0;i<SIZE;i++)if(!state.terrain[i]&&priority[i]===0)owner[i]=state.owner[i]??-1;
- if(wrathActive())for(const i of Object.keys(state.wrathClaims||{}))if(!state.terrain[i])owner[i]=1;
+ if(wrathActive()){
+  const castleLand=new Set();
+  for(const castle of state.entities.filter(e=>e.side===0&&e.type==='castle'&&e.hp>0)){
+   flood(castle.x,castle.y,TYPES.castle.claim,i=>castleLand.add(i));
+  }
+  for(const key of Object.keys(state.wrathClaims||{})){
+   const i=Number(key);
+   if(castleLand.has(i))delete state.wrathClaims[key];
+   else if(!state.terrain[i])owner[i]=1;
+  }
+ }
  state.owner=owner;
  for(let s=0;s<2;s++){let vis=Array(SIZE).fill(0);for(const e of state.entities)if(e.side===s)flood(e.x,e.y,TYPES[e.type].vision||9,i=>vis[i]=1);for(const n of state.sites)if(n.owner===s)flood(n.x,n.y,7,i=>vis[i]=1);// Mountains bordering visible ground are visible obstacles, not unexplored holes.
  for(let i=0;i<SIZE;i++)if(vis[i]&&!state.terrain[i]){const x=i%N,y=i/N|0;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let a=x+dx,b=y+dy;if(inside(a,b)&&state.terrain[idx(a,b)])vis[idx(a,b)]=1}}
