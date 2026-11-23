@@ -270,7 +270,7 @@ function wrathTick(){
    flood(unit.x,unit.y,TYPES[unit.type].claim,i=>claims[i]=1);
   }
   if(unit.type==='godEmissary'){
-   const decoy=state.entities.filter(e=>e.side===0&&e.type==='soldier'&&e.hp>0&&dist(unit,e)<=8).sort((a,b)=>dist(unit,a)-dist(unit,b)||a.id-b.id)[0];
+   const decoy=state.entities.filter(e=>e.side===0&&TYPES[e.type].speed>0&&e.hp>0&&dist(unit,e)<=8).sort((a,b)=>dist(unit,a)-dist(unit,b)||a.id-b.id)[0];
    if(decoy){
     unit.wrathLured=true;
     if(dist(unit,decoy)<=TYPES.godEmissary.range){unit.path=[];unit.goal={x:decoy.x,y:decoy.y};continue}
