@@ -337,7 +337,7 @@ function wrathPlague(wrath){
  while(wrath.plagueSecond<second){
   wrath.plagueSecond++;
   const random=rng(state.seed+wrath.plagueSecond*104729+701);
-  const soldiers=state.entities.filter(e=>e.hp>0&&(e.type==='soldier'||e.type==='godSoldier')).sort((a,b)=>a.id-b.id);
+  const soldiers=state.entities.filter(e=>e.side===0&&e.hp>0&&(e.type==='soldier'||e.type==='godSoldier')).sort((a,b)=>a.id-b.id);
   const infected=soldiers.filter(()=>random()<.01);
   const affected=new Set();
   for(const source of infected)for(const soldier of soldiers)if(dist(source,soldier)<=5)affected.add(soldier);
