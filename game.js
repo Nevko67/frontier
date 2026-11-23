@@ -66,9 +66,13 @@ function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(S
   }
   for(const key of Object.keys(state.wrathClaims||{})){
    const i=Number(key);
-   if(castleLand.has(i)&&soldierLand.has(i))delete state.wrathClaims[key];
+   if(castleLand.has(i)&&soldierLand.has(i)){
+    delete state.wrathClaims[key];
+    (state.wrathReclaimed||(state.wrathReclaimed={}))[i]=1;
+   }
    else if(!state.terrain[i])owner[i]=1;
   }
+  for(const key of Object.keys(state.wrathReclaimed||{}))if(!state.terrain[key])owner[key]=0;
  }
  state.owner=owner;
  for(let s=0;s<2;s++){let vis=Array(SIZE).fill(0);for(const e of state.entities)if(e.side===s)flood(e.x,e.y,TYPES[e.type].vision||9,i=>vis[i]=1);for(const n of state.sites)if(n.owner===s)flood(n.x,n.y,7,i=>vis[i]=1);// Mountains bordering visible ground are visible obstacles, not unexplored holes.
@@ -287,7 +291,7 @@ function wrathTick(){
  for(const unit of state.entities.filter(e=>e.side===1&&e.hp>0&&TYPES[e.type].divine&&e.type!=='godGuard')){
   if(unit.type==='godEmissary'){
    const claims=state.wrathClaims||(state.wrathClaims={});
-   flood(unit.x,unit.y,TYPES[unit.type].claim,i=>claims[i]=1);
+   flood(unit.x,unit.y,TYPES[unit.type].claim,i=>{claims[i]=1;if(state.wrathReclaimed)delete state.wrathReclaimed[i]});
   }
   if(unit.type==='godEmissary'){
    const decoy=state.entities.filter(e=>e.side===0&&TYPES[e.type].speed>0&&e.hp>0&&dist(unit,e)<=8).sort((a,b)=>dist(unit,a)-dist(unit,b)||a.id-b.id)[0];
