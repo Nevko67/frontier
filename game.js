@@ -52,7 +52,7 @@ function spawn(side,type,x,y){const t=TYPES[type],e={id:nextId++,side,type,x,y,h
 function walk(x,y){return inside(x,y)&&!state.terrain[idx(x,y)]}
 function flood(x,y,r,fn){const sx=Math.floor(x),sy=Math.floor(y),queue=[[sx,sy]],seen=new Set([idx(sx,sy)]);for(let k=0;k<queue.length;k++){const [xx,yy]=queue[k];if(!walk(xx,yy)||Math.hypot(xx+.5-x,yy+.5-y)>r)continue;fn(idx(xx,yy),xx,yy);for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let a=xx+dx,b=yy+dy,j=idx(a,b);if(inside(a,b)&&!seen.has(j)){seen.add(j);queue.push([a,b])}}}}
 function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(SIZE),distance=new Float32Array(SIZE).fill(1e9);function claim(e,r,p){flood(e.x,e.y,r,(i,x,y)=>{const d=Math.hypot(x+.5-e.x,y+.5-e.y);if(p>priority[i]||p===priority[i]&&d<distance[i]-.001){priority[i]=p;distance[i]=d;owner[i]=e.side}else if(p===priority[i]&&Math.abs(d-distance[i])<.001&&owner[i]!==e.side)owner[i]=-1})}
- for(const e of state.entities)claim(e,TYPES[e.type].claim,TYPES[e.type].speed?1:2);for(const n of state.sites)if(n.owner>=0)claim({...n,side:n.owner},3,1);
+ for(const e of state.entities)claim(e,TYPES[e.type].claim+(wrathActive()&&e.side===0&&e.type==='banner'?2:0),TYPES[e.type].speed?1:2);for(const n of state.sites)if(n.owner>=0)claim({...n,side:n.owner},3,1);
  // War remembers only uncovered land. Active claims still use the normal priority rules.
  if(state.gameMode==='war')for(let i=0;i<SIZE;i++)if(!state.terrain[i]&&priority[i]===0)owner[i]=state.owner[i]??-1;
  if(wrathActive()){
@@ -337,12 +337,12 @@ function wrathPlague(wrath){
  while(wrath.plagueSecond<second){
   wrath.plagueSecond++;
   const random=rng(state.seed+wrath.plagueSecond*104729+701);
-  const soldiers=state.entities.filter(e=>e.side===0&&e.hp>0&&(e.type==='soldier'||e.type==='godSoldier')).sort((a,b)=>a.id-b.id);
+  const soldiers=state.entities.filter(e=>e.side===0&&e.hp>0&&TYPES[e.type].speed>0).sort((a,b)=>a.id-b.id);
   const infected=soldiers.filter(()=>random()<.01);
   const affected=new Set();
   for(const source of infected)for(const soldier of soldiers)if(dist(source,soldier)<=5)affected.add(soldier);
   for(const soldier of affected)soldier.hp=Math.max(0,soldier.hp-TYPES[soldier.type].hp*.34);
-  if(infected.length)event('Plague strikes Soldiers within five tiles of an outbreak.');
+  if(infected.length)event('Plague strikes your units within five tiles of an outbreak.');
  }
 }
 
@@ -355,7 +355,7 @@ function draw(){if(!state)return;const hx=width/2/cam.z,hy=height/2/cam.z;cam.x=
  const appearance=window.FrontierAppearance||{};
  if(appearance.grid||mode){ctx.strokeStyle=appearance.style==='parchment'?'#d8c69c45':'#b8d5c632';ctx.lineWidth=1;ctx.beginPath();for(let x=x0;x<=x1;x++){const a=screen(x,y0),b=screen(x,y1);ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y)}for(let y=y0;y<=y1;y++){const a=screen(x0,y),b=screen(x1,y);ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y)}ctx.stroke()}
  if(mode){const key=[mode,state.money[0].map(n=>Math.floor(n/10)).join(','),state.entities.length].join(':');if(!draw.placement||draw.placement.owner!==state.owner||draw.placement.key!==key){const cells=[];for(let i=0;i<SIZE;i++)if(vis[i]&&state.owner[i]===0&&!state.terrain[i]&&!placementError(0,mode,i%N+.5,(i/N|0)+.5))cells.push(i);draw.placement={owner:state.owner,key,cells}}ctx.fillStyle='#b4e97f25';for(const i of draw.placement.cells){const p=screen(i%N,i/N|0);ctx.fillRect(p.x+2,p.y+2,z-4,z-4)}}
- if(mode&&pointer){const w=world(pointer.x,pointer.y),x=Math.floor(w.x)+.5,y=Math.floor(w.y)+.5,t=TYPES[mode],p=screen(x-.5,y-.5),c=screen(x,y),reason=placementError(0,mode,x,y);ctx.strokeStyle=reason?'#ff8b85':'#d9ffa6';ctx.fillStyle=reason?'#f7726944':'#c9f79155';ctx.lineWidth=2;ctx.fillRect(p.x+1,p.y+1,z-2,z-2);ctx.strokeRect(p.x+1,p.y+1,z-2,z-2);ctx.beginPath();ctx.arc(c.x,c.y,t.claim*z,0,Math.PI*2);ctx.stroke();ctx.font='12px sans-serif';ctx.textAlign='center';const label=reason||'Deploy '+t.name;ctx.fillStyle='#101d19';const textWidth=Math.min(width-16,Math.max(180,ctx.measureText(label).width+20)),labelX=Math.max(textWidth/2+8,Math.min(width-textWidth/2-8,c.x));ctx.fillRect(labelX-textWidth/2,c.y-z-22,textWidth,23);ctx.fillStyle=reason?'#ffb9b3':'#dbf6bb';ctx.fillText(label,labelX,c.y-z-6,textWidth-16)}
+ if(mode&&pointer){const w=world(pointer.x,pointer.y),x=Math.floor(w.x)+.5,y=Math.floor(w.y)+.5,t=TYPES[mode],p=screen(x-.5,y-.5),c=screen(x,y),reason=placementError(0,mode,x,y);ctx.strokeStyle=reason?'#ff8b85':'#d9ffa6';ctx.fillStyle=reason?'#f7726944':'#c9f79155';ctx.lineWidth=2;ctx.fillRect(p.x+1,p.y+1,z-2,z-2);ctx.strokeRect(p.x+1,p.y+1,z-2,z-2);ctx.beginPath();ctx.arc(c.x,c.y,(t.claim+(wrathActive()&&mode==='banner'?2:0))*z,0,Math.PI*2);ctx.stroke();ctx.font='12px sans-serif';ctx.textAlign='center';const label=reason||'Deploy '+t.name;ctx.fillStyle='#101d19';const textWidth=Math.min(width-16,Math.max(180,ctx.measureText(label).width+20)),labelX=Math.max(textWidth/2+8,Math.min(width-textWidth/2-8,c.x));ctx.fillRect(labelX-textWidth/2,c.y-z-22,textWidth,23);ctx.fillStyle=reason?'#ffb9b3':'#dbf6bb';ctx.fillText(label,labelX,c.y-z-6,textWidth-16)}
 
  for(const id of selected){let e=state.entities.find(e=>e.id===id);if(e&&e.goal&&!wrathActive()){let p=screen(e.x,e.y),g=screen(e.goal.x,e.goal.y);ctx.strokeStyle='#c9dc8c77';ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(p.x,p.y);for(const node of e.path){let q=screen(node.x,node.y);ctx.lineTo(q.x,q.y)}ctx.stroke();ctx.setLineDash([]);ctx.strokeRect(g.x-4,g.y-4,8,8)}}if(wrathActive()){const phase=Math.floor(state.time*7);ctx.fillStyle='#dccbff';for(let n=0;n<28;n++){const random=rng(state.seed+phase*1237+n*31),x=Math.floor(random()*N),y=Math.floor(random()*N);if(!vis[idx(x,y)]){const p=screen(x+.5,y+.5);ctx.globalAlpha=.15+random()*.55;ctx.fillRect(p.x-1,p.y-3,2,6);ctx.fillRect(p.x-3,p.y-1,6,2)}}ctx.globalAlpha=1}drawMini();}
 function drawTerrainFeature(feature,p,z){const style=window.FrontierAppearance?.style;if(feature===1&&z>=8&&style==='parchment'){ctx.fillStyle='#685034';ctx.fillRect(p.x+z*.46,p.y+z*.42,z*.1,z*.46);ctx.fillStyle='#547044';for(const [x,y,r]of [[.35,.4,.25],[.65,.4,.25],[.5,.23,.23]]){ctx.beginPath();ctx.arc(p.x+x*z,p.y+y*z,r*z,0,Math.PI*2);ctx.fill()}return}if(feature===1&&z>=8&&style==='slate'){ctx.fillStyle='#547982';for(const x of [.3,.7]){ctx.beginPath();ctx.moveTo(p.x+x*z,p.y+z*.1);ctx.lineTo(p.x+(x+.18)*z,p.y+z*.5);ctx.lineTo(p.x+x*z,p.y+z*.88);ctx.lineTo(p.x+(x-.18)*z,p.y+z*.5);ctx.fill()}return}
