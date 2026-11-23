@@ -60,9 +60,13 @@ function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(S
   for(const castle of state.entities.filter(e=>e.side===0&&e.type==='castle'&&e.hp>0)){
    flood(castle.x,castle.y,TYPES.castle.claim,i=>castleLand.add(i));
   }
+  const soldierLand=new Set();
+  for(const soldier of state.entities.filter(e=>e.side===0&&e.type==='soldier'&&e.hp>0)){
+   flood(soldier.x,soldier.y,TYPES.soldier.claim,i=>soldierLand.add(i));
+  }
   for(const key of Object.keys(state.wrathClaims||{})){
    const i=Number(key);
-   if(castleLand.has(i))delete state.wrathClaims[key];
+   if(castleLand.has(i)&&soldierLand.has(i))delete state.wrathClaims[key];
    else if(!state.terrain[i])owner[i]=1;
   }
  }
