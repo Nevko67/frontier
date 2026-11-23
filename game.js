@@ -339,7 +339,9 @@ function wrathPlague(wrath){
   const random=rng(state.seed+wrath.plagueSecond*104729+701);
   const soldiers=state.entities.filter(e=>e.hp>0&&(e.type==='soldier'||e.type==='godSoldier')).sort((a,b)=>a.id-b.id);
   const infected=soldiers.filter(()=>random()<.01);
-  for(const source of infected)for(const soldier of soldiers)if(dist(source,soldier)<=5)soldier.hp=0;
+  const affected=new Set();
+  for(const source of infected)for(const soldier of soldiers)if(dist(source,soldier)<=5)affected.add(soldier);
+  for(const soldier of affected)soldier.hp=Math.max(0,soldier.hp-TYPES[soldier.type].hp*.34);
   if(infected.length)event('Plague strikes Soldiers within five tiles of an outbreak.');
  }
 }
