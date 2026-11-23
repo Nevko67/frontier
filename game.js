@@ -231,8 +231,24 @@ function wrathTick(){
   for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(walk(x,y)&&dist({x:x+.5,y:y+.5},anchor)<5)cells.push({x:x+.5,y:y+.5});
   if(cells.length&&state.entities.filter(e=>e.side===1).length+count<=160){
    cells.sort((a,b)=>dist(a,anchor)-dist(b,anchor));
-   for(let n=0;n<count;n++){const cell=cells[n%Math.min(cells.length,9)];spawn(1,type,cell.x,cell.y)}
-   event(type==='godSoldier'?'Thirty Soldiers of the God enter the darkness.':TYPES[type].name+' enters the darkness.');
+   let formation=type==='godSoldier'?[]:[cells[0]];
+   if(type==='godSoldier'){
+    const origins=[];
+    for(let y=0;y<=N-6;y++)for(let x=0;x<=N-5;x++)origins.push({x,y});
+    origins.sort((a,b)=>dist({x:a.x+2.5,y:a.y+3},anchor)-dist({x:b.x+2.5,y:b.y+3},anchor));
+    for(const origin of origins){
+     const grid=[];
+     for(let row=0;row<6;row++)for(let column=0;column<5;column++){
+      const x=origin.x+column+.5,y=origin.y+row+.5;
+      if(walk(x,y)&&!state.entities.some(e=>e.hp>0&&Math.floor(e.x)===Math.floor(x)&&Math.floor(e.y)===Math.floor(y)))grid.push({x,y});
+     }
+     if(grid.length===30){formation=grid;break}
+    }
+   }
+   if(formation.length===count){
+    for(const cell of formation)spawn(1,type,cell.x,cell.y);
+    event(type==='godSoldier'?'Thirty Soldiers of the God enter the darkness.':TYPES[type].name+' enters the darkness.');
+   }
   }
   wrath.wave++;wrath.nextAt=state.time+20+random()*20;
  }
