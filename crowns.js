@@ -2,16 +2,27 @@
 (() => {
   const storageKey = 'frontier-crowns-v1';
   const silverRewards = Object.freeze({Easy: 1, Normal: 10, Hard: 75, Brutal: 300, Impossible: 1200, God: 6000, Wrath: 3000});
+  const items = Object.freeze({
+    war:{name:'War mode',kind:'mode',price:500},
+    'banner-chevron':{name:'Chevron banner',kind:'banner',price:10},
+    'banner-cross':{name:'Cross banner',kind:'banner',price:10},
+    'palette-jade':{name:'Jade army',kind:'palette',price:75,color:'#58c49b'},
+    'palette-violet':{name:'Violet army',kind:'palette',price:75,color:'#b694e8'},
+    'castle-royal':{name:'Royal castle',kind:'castle',price:300},
+    'castle-fortress':{name:'Iron fortress',kind:'castle',price:300}
+  });
   let pending = Promise.resolve();
 
   function readWallet() {
     const raw = localStorage.getItem(storageKey);
-    if (!raw) return {version: 1, silver: 0, gold: 0, awarded: {}};
+    if (!raw) return {version: 1, silver: 0, gold: 0, awarded: {}, owned: [], equipped: {}};
     const wallet = JSON.parse(raw);
     if (wallet.version !== 1 || !Number.isSafeInteger(wallet.silver) || wallet.silver < 0 ||
         !Number.isSafeInteger(wallet.gold) || wallet.gold < 0 || !wallet.awarded || typeof wallet.awarded !== 'object') {
       throw Error('Crown balance could not be loaded. Browser data has an unsupported format.');
     }
+    wallet.owned = Array.isArray(wallet.owned) ? wallet.owned.filter(id => Object.hasOwn(items,id)) : [];
+    wallet.equipped = wallet.equipped && typeof wallet.equipped === 'object' ? wallet.equipped : {};
     return wallet;
   }
 
@@ -93,7 +104,28 @@
     return saveReward({id: 'pvp-' + room, currency: 'gold', amount: state.winner === 0 ? 30 : 10});
   }
 
-  window.FrontierCrowns = {startMatch, awardSoloVictory, awardPvPResult};
+  function transact(id, equipOnly=false) {
+    const action=()=>{
+      if(!Object.hasOwn(items,id))throw Error('Unknown shop item.');
+      const w=readWallet(),item=items[id];
+      if(!w.owned.includes(id)){
+        if(equipOnly)throw Error('Purchase this item first.');
+        if(w.silver<item.price)throw Error('Need '+(item.price-w.silver)+' more Silver Crowns.');
+        w.silver-=item.price;w.owned.push(id);
+      }
+      if(item.kind!=='mode')w.equipped[item.kind]=id;
+      localStorage.setItem(storageKey,JSON.stringify(w));render(w);return w;
+    };
+    pending=pending.catch(()=>{}).then(()=>navigator.locks?navigator.locks.request(storageKey,action):action());
+    return pending;
+  }
+  function resetCosmetic(kind){
+    const action=()=>{const w=readWallet();delete w.equipped[kind];localStorage.setItem(storageKey,JSON.stringify(w));return w};
+    pending=pending.catch(()=>{}).then(()=>navigator.locks?navigator.locks.request(storageKey,action):action());return pending;
+  }
+  function snapshot(){const w=readWallet();return {...w,owned:[...w.owned],equipped:{...w.equipped}}}
+  function hasUnlock(id){try{return readWallet().owned.includes(id)}catch{return false}}
+  window.FrontierCrowns = {startMatch, awardSoloVictory, awardPvPResult, items, transact, resetCosmetic, snapshot, hasUnlock};
   window.addEventListener('storage', event => { if (event.key === storageKey) refresh(); });
   refresh();
 })();
