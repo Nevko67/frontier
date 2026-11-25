@@ -89,7 +89,7 @@
   }
 
   function awardSoloVictory(state) {
-    if (!state.ended || state.pvp || !state.crownMatchId || !Object.hasOwn(silverRewards, state.difficulty)) return Promise.resolve();
+    if (!state.ended || state.pvp || state.spectator || !state.crownMatchId || !Object.hasOwn(silverRewards, state.difficulty)) return Promise.resolve();
     const friendlyCastle = state.entities.some(unit => unit.type === 'castle' && unit.side === 0 && unit.hp > 0);
     const enemyCastle = state.entities.some(unit => unit.type === 'castle' && unit.side === 1 && unit.hp > 0);
     if (!friendlyCastle || enemyCastle) return Promise.resolve();
