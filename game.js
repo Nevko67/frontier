@@ -50,7 +50,19 @@ function makeGame(seed=Date.now()>>>0,gameMode=$('gameMode')?.value,difficulty=$
 }
 
 // Frosty Mountains is solo-only. All timers use simulation seconds, including saves/replays.
-function frostyActive(){return state?.difficulty==='Frosty'&&!state.pvp}
+
+function challengeSide(){return state?.spectator&&state.challengeSide===1?1:0}
+function challengeEnemy(){return 1-challengeSide()}
+function validSpectatorResources(values){return Array.isArray(values)&&values.length===4&&values.every(v=>Number.isSafeInteger(v)&&v>=0&&v<=1e9)}
+function setSpectatorResources(side,values,operation='set'){
+ if(!state?.spectator||state.pvp||state.ended||![0,1].includes(side)||!validSpectatorResources(values)||!['set','add'].includes(operation))return false;
+ const next=values.map((n,k)=>operation==='add'?state.money[side][k]+n:n);if(next.some(n=>!Number.isFinite(n)||n<0||n>1e9))return false;
+ const before=state.money[side].slice();state.money[side]=next;(state.resourceOverrides||(state.resourceOverrides=[false,false]))[side]=true;
+ const edits=state.spectatorEdits||(state.spectatorEdits=[]);edits.push({time:state.time,side,operation,before,after:next.slice()});if(edits.length>100)edits.shift();event((side===0?'Blue':'Red')+' bot resources '+(operation==='add'?'increased':'set')+' by spectator.');return true;
+}
+function restoreSpectatorResources(side){if(!state?.spectator||state.pvp||state.ended||![0,1].includes(side))return false;if(state.resourceOverrides)state.resourceOverrides[side]=false;event((side===0?'Blue':'Red')+' bot automatic resource rules restored.');return true}
+
+function frostyActive(){return (state?.difficulty==='Frosty'||state?.spectator&&state.spectatorStage==='Frosty')&&!state.pvp}
 function frostyMap(){
  if(!frostyActive())return;
  const random=rng(state.seed^0x5f2057);state.snow=Array(SIZE).fill(0);
@@ -66,34 +78,34 @@ function frostSight(x,y,r,fn){
  }
 }
 function frostVisible(x,y,r,fn){return frostyActive()?frostSight(x,y,r,fn):flood(x,y,r,fn)}
-function frostFrozen(e){return frostyActive()&&e.side===0&&e.frozen>0}
-function frostMove(e){if(frostFrozen(e))return 0;if(frostyActive()&&e.side===1)return 1;return (state.features?.[idx(e.x,e.y)]===1?.85:1)*(frostyActive()&&state.snow?.[idx(e.x,e.y)]?.5:1)}
+function frostFrozen(e){return frostyActive()&&e.side===challengeSide()&&e.frozen>0}
+function frostMove(e){if(frostFrozen(e))return 0;if(frostyActive()&&e.side===challengeEnemy())return 1;return (state.features?.[idx(e.x,e.y)]===1?.85:1)*(frostyActive()&&state.snow?.[idx(e.x,e.y)]?.5:1)}
 function frostHit(attacker,target){
- if(!frostyActive()||attacker.side!==1||target.side!==0||!TYPES[target.type].speed)return;
+ if(!frostyActive()||attacker.side!==challengeEnemy()||target.side!==challengeSide()||!TYPES[target.type].speed)return;
  target.exposure=Math.min(60,(target.exposure||0)+8);
  if(TYPES[attacker.type].range>=2.5)target.frozen=Math.max(target.frozen||0,1);
 }
 function frostTick(dt){
  if(!frostyActive())return;
- const own=state.entities.filter(e=>e.side===0&&e.hp>0),troops=own.filter(e=>TYPES[e.type].speed),shelters=own.filter(e=>!TYPES[e.type].speed);
+ const own=state.entities.filter(e=>e.side===challengeSide()&&e.hp>0),troops=own.filter(e=>TYPES[e.type].speed),shelters=own.filter(e=>!TYPES[e.type].speed);
  for(const e of troops){e.frozen=Math.max(0,(e.frozen||0)-dt);if(shelters.some(t=>dist(e,t)<=4)){e.exposure=0;e.cold=false}else{e.exposure=(e.exposure||0)+dt;e.cold=e.exposure>=20;if(e.cold)e.hp-=TYPES[e.type].hp*.01*dt}}
- for(const e of shelters){if(e.type==='castle')continue;const near=troops.some(t=>t.hp>0&&dist(e,t)<=4);e.unattended=near?0:(e.unattended||0)+dt;e.frostUnsupplied=e.unattended>=30;e.supplied=!e.frostUnsupplied&&!!state.supply[0][idx(e.x,e.y)]}
+ for(const e of shelters){if(e.type==='castle')continue;const near=troops.some(t=>t.hp>0&&dist(e,t)<=4);e.unattended=near?0:(e.unattended||0)+dt;e.frostUnsupplied=e.unattended>=30;e.supplied=!e.frostUnsupplied&&!!state.supply[challengeSide()][idx(e.x,e.y)]}
 }
 
 function spawn(side,type,x,y){const t=TYPES[type],e={id:nextId++,side,type,x,y,hp:t.hp,path:[],goal:null,cool:t.attackInterval||0,order:'hold',auto:(side===0||state.pvp)&&['scout','soldier','knight','siege','rider','medic','cannoneer','thief','mage','spawner','woodcutter','miner'].includes(type),supplied:true};state.entities.push(e);return e}
 function walk(x,y){return inside(x,y)&&!state.terrain[idx(x,y)]}
 function flood(x,y,r,fn){const sx=Math.floor(x),sy=Math.floor(y),queue=[[sx,sy]],seen=new Set([idx(sx,sy)]);for(let k=0;k<queue.length;k++){const [xx,yy]=queue[k];if(!walk(xx,yy)||Math.hypot(xx+.5-x,yy+.5-y)>r)continue;fn(idx(xx,yy),xx,yy);for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let a=xx+dx,b=yy+dy,j=idx(a,b);if(inside(a,b)&&!seen.has(j)){seen.add(j);queue.push([a,b])}}}}
 function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(SIZE),distance=new Float32Array(SIZE).fill(1e9);function claim(e,r,p){flood(e.x,e.y,r,(i,x,y)=>{const d=Math.hypot(x+.5-e.x,y+.5-e.y);if(p>priority[i]||p===priority[i]&&d<distance[i]-.001){priority[i]=p;distance[i]=d;owner[i]=e.side}else if(p===priority[i]&&Math.abs(d-distance[i])<.001&&owner[i]!==e.side)owner[i]=-1})}
- for(const e of state.entities)claim(e,TYPES[e.type].claim+(wrathActive()&&e.side===0&&e.type==='banner'?2:0),TYPES[e.type].speed?1:2);for(const n of state.sites)if(n.owner>=0)claim({...n,side:n.owner},3,1);
+ for(const e of state.entities)claim(e,TYPES[e.type].claim+(wrathActive()&&e.side===challengeSide()&&e.type==='banner'?2:0),TYPES[e.type].speed?1:2);for(const n of state.sites)if(n.owner>=0)claim({...n,side:n.owner},3,1);
  // War remembers only uncovered land. Active claims still use the normal priority rules.
  if(state.gameMode==='war')for(let i=0;i<SIZE;i++)if(!state.terrain[i]&&priority[i]===0)owner[i]=state.owner[i]??-1;
  if(wrathActive()){
   const castleLand=new Set();
-  for(const castle of state.entities.filter(e=>e.side===0&&e.type==='castle'&&e.hp>0)){
+  for(const castle of state.entities.filter(e=>e.side===challengeSide()&&e.type==='castle'&&e.hp>0)){
    flood(castle.x,castle.y,TYPES.castle.claim,i=>castleLand.add(i));
   }
   const soldierLand=new Set();
-  for(const soldier of state.entities.filter(e=>e.side===0&&e.type==='soldier'&&e.hp>0)){
+  for(const soldier of state.entities.filter(e=>e.side===challengeSide()&&e.type==='soldier'&&e.hp>0)){
    flood(soldier.x,soldier.y,TYPES.soldier.claim,i=>soldierLand.add(i));
   }
   for(const key of Object.keys(state.wrathClaims||{})){
@@ -102,20 +114,20 @@ function recalculate(){const owner=Array(SIZE).fill(-1),priority=new Int8Array(S
     delete state.wrathClaims[key];
     (state.wrathReclaimed||(state.wrathReclaimed={}))[i]=1;
    }
-   else if(!state.terrain[i])owner[i]=1;
+   else if(!state.terrain[i])owner[i]=challengeEnemy();
   }
-  for(const key of Object.keys(state.wrathReclaimed||{}))if(!state.terrain[key])owner[key]=0;
+  for(const key of Object.keys(state.wrathReclaimed||{}))if(!state.terrain[key])owner[key]=challengeSide();
  }
  state.owner=owner;
  for(let s=0;s<2;s++){let vis=Array(SIZE).fill(0);for(const e of state.entities)if(e.side===s)frostVisible(e.x,e.y,TYPES[e.type].vision||9,i=>vis[i]=1);for(const n of state.sites)if(n.owner===s)frostVisible(n.x,n.y,7,i=>vis[i]=1);// Mountains bordering visible ground are visible obstacles, not unexplored holes.
  for(let i=0;i<SIZE;i++)if(!frostyActive()&&vis[i]&&!state.terrain[i]){const x=i%N,y=i/N|0;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let a=x+dx,b=y+dy;if(inside(a,b)&&state.terrain[idx(a,b)])vis[idx(a,b)]=1}}
- if(wrathActive()&&s===0){vis=owner.map(side=>side===0?1:0);const castle=state.entities.find(e=>e.side===0&&e.type==='castle');if(castle)vis[idx(castle.x,castle.y)]=1;state.explored[0].fill(0);state.memory[0]={}}
+ if(wrathActive()&&s===challengeSide()){vis=owner.map(side=>side===s?1:0);const castle=state.entities.find(e=>e.side===s&&e.type==='castle');if(castle)vis[idx(castle.x,castle.y)]=1;state.explored[s].fill(0);state.memory[s]={}}
  state.visible[s]=vis;for(let i=0;i<SIZE;i++)if(vis[i])state.explored[s][i]=1;
  const supply=Array(SIZE).fill(0),q=[];for(const n of [...state.sites.filter(n=>n.owner===s),...state.entities.filter(e=>e.side===s&&e.type==='castle')]){let i=idx(n.x,n.y);if(owner[i]===s&&!supply[i]){supply[i]=1;q.push(i)}}for(let k=0;k<q.length;k++){let i=q[k],x=i%N,y=i/N|0;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let a=x+dx,b=y+dy,j=idx(a,b);if(inside(a,b)&&owner[j]===s&&!supply[j]){supply[j]=1;q.push(j)}}}state.supply[s]=supply;
  for(const e of state.entities)if(e.side!==s&&vis[idx(e.x,e.y)]&&!TYPES[e.type].speed)state.memory[s][e.id]={...e};for(const id in state.memory[s]){let e=state.memory[s][id];if(vis[idx(e.x,e.y)]&&!state.entities.some(a=>a.id===e.id))delete state.memory[s][id]}}
  for(const e of state.entities)e.supplied=e.type==='castle'||(!e.frostUnsupplied&&!!state.supply[e.side][idx(e.x,e.y)]);}
 // A* uses known terrain only. Unknown tiles are explored as the unit advances.
-function pathfind(e,g,blocked={}){const s=idx(e.x,e.y),target=idx(g.x,g.y),open=[s],came=new Int32Array(SIZE).fill(-1),cost=new Float32Array(SIZE).fill(Infinity),closed=new Uint8Array(SIZE);cost[s]=0;let best=s,bestD=Infinity;for(let iter=0;open.length&&iter<12000;iter++){let bi=0,bf=Infinity;for(let k=0;k<open.length;k++){let i=open[k],f=cost[i]+Math.abs(i%N-Math.floor(g.x))+Math.abs((i/N|0)-Math.floor(g.y));if(f<bf){bf=f;bi=k}}let i=open.splice(bi,1)[0];if(closed[i])continue;closed[i]=1;let x=i%N,y=i/N|0,d=Math.hypot(x-g.x,y-g.y);if(d<bestD){best=i;bestD=d}if(i===target)break;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let xx=x+dx,yy=y+dy,j=idx(xx,yy);if(!inside(xx,yy)||closed[j]||blocked[j]||state.explored[e.side][j]&&state.terrain[j])continue;let c=cost[i]+(state.explored[e.side][j]&&state.features?.[j]===1&&!(frostyActive()&&e.side===1)?1/.85:1)*(frostyActive()&&e.side===0&&state.explored[0][j]&&state.snow?.[j]?2:1);if(c<cost[j]){came[j]=i;cost[j]=c;open.push(j)}}}let path=[],i=best;while(i!==s&&i>=0){path.push({x:i%N+.5,y:(i/N|0)+.5});i=came[i]}return path.reverse()}
+function pathfind(e,g,blocked={}){const s=idx(e.x,e.y),target=idx(g.x,g.y),open=[s],came=new Int32Array(SIZE).fill(-1),cost=new Float32Array(SIZE).fill(Infinity),closed=new Uint8Array(SIZE);cost[s]=0;let best=s,bestD=Infinity;for(let iter=0;open.length&&iter<12000;iter++){let bi=0,bf=Infinity;for(let k=0;k<open.length;k++){let i=open[k],f=cost[i]+Math.abs(i%N-Math.floor(g.x))+Math.abs((i/N|0)-Math.floor(g.y));if(f<bf){bf=f;bi=k}}let i=open.splice(bi,1)[0];if(closed[i])continue;closed[i]=1;let x=i%N,y=i/N|0,d=Math.hypot(x-g.x,y-g.y);if(d<bestD){best=i;bestD=d}if(i===target)break;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let xx=x+dx,yy=y+dy,j=idx(xx,yy);if(!inside(xx,yy)||closed[j]||blocked[j]||state.explored[e.side][j]&&state.terrain[j])continue;let c=cost[i]+(state.explored[e.side][j]&&state.features?.[j]===1&&!(frostyActive()&&e.side===challengeEnemy())?1/.85:1)*(frostyActive()&&e.side===challengeSide()&&state.explored[challengeSide()][j]&&state.snow?.[j]?2:1);if(c<cost[j]){came[j]=i;cost[j]=c;open.push(j)}}}let path=[],i=best;while(i!==s&&i>=0){path.push({x:i%N+.5,y:(i/N|0)+.5});i=came[i]}return path.reverse()}
 function placementError(side,type,x,y){
  const t=TYPES[type];if(!t)return 'Unknown unit or building';if(!inside(x,y))return 'Outside the map';
  const i=idx(x,y);if(!walk(x,y))return state.features?.[i]===2?'River blocks this cell — choose land or a bridge':'Mountain blocks this cell — choose open ground';
@@ -182,15 +194,21 @@ function tick(dt){if(state.ended)return;state.time+=dt;wrathTick();frostTick(dt)
  state.entities=all.filter(e=>e.hp>0);if(state.ended&&!state.pvp&&!state.spectator)window.FrontierCrowns?.awardSoloVictory(state);state.worldClock+=dt;state.botClock+=dt;state.saveClock+=dt;if(state.worldClock>=.4){state.worldClock=0;recalculate()}if(state.spectator){for(let side=0;side<2;side++)state.botClocks[side]+=dt;for(const side of state.botOrder++%2?[1,0]:[0,1])if(state.botClocks[side]>botDifficulty(side).interval){state.botClocks[side]=0;bot(side)}}else if(!state.pvp&&state.botClock>botDifficulty().interval){state.botClock=0;bot()}if(state.saveClock>10){state.saveClock=0;save(false)}}
 // Shared reverse-BFS routes keep bot planning bounded, without revealing hidden terrain.
 function bot(side=1){if(![0,1].includes(side))return;if(state.spectator){state.botActing=true;try{return botPlan(side)}finally{delete state.botActing}}return botPlan(side)}
-function makeBotMatch(seed,blue='Hard',red='Brutal',gameMode='classic'){
+function makeBotMatch(seed,blue='Hard',red='Brutal',gameMode='classic',options={}){
  const levels=['Easy','Normal','Hard','Brutal','Impossible','God'];if(!levels.includes(blue)||!levels.includes(red)||!['classic','war'].includes(gameMode))throw Error('Choose standard bot difficulties and Classic or War.');
- makeGame(seed,gameMode,'Normal');state.spectator=true;state.botDifficulties=[blue,red];state.botStates=[{},{}];state.botClocks=[0,0];state.botOrder=0;for(const e of state.entities)e.auto=false;return state;
+ const stage=options.stage??'standard',challenged=options.challengeSide??0,starting=options.resources??[null,null];
+ if(!['standard','Frosty','Wrath'].includes(stage)||![0,1].includes(challenged))throw Error('Choose a valid map and challenged bot.');
+ if(!Array.isArray(starting)||starting.length!==2||starting.some(v=>v!==null&&!validSpectatorResources(v)))throw Error('Resources must be four whole numbers from 0 to 1000000000 for each bot.');
+ makeGame(seed,gameMode,'Normal');state.spectator=true;state.spectatorStage=stage;state.challengeSide=challenged;state.botDifficulties=[blue,red];state.botStates=[{},{}];state.botClocks=[0,0];state.botOrder=0;state.resourceOverrides=[false,false];state.spectatorEdits=[];
+ if(frostyActive())frostyMap();if(wrathActive())wrathTick();
+ for(const side of [0,1])if(starting[side]!==null)setSpectatorResources(side,starting[side]);
+ for(const e of state.entities)e.auto=false;recalculate();return state;
 }
 function botPlan(side=1){
  const foe=1-side,brain=state.spectator?(state.botStates[side]||(state.botStates[side]={})):state,difficulty=state.spectator?state.botDifficulties[side]:state.difficulty,directionScore=p=>side===1?p.x+p.y:2*N-p.x-p.y;
- if(wrathActive())return;
+ if(wrathActive()&&(!state.spectator||side===challengeEnemy()))return;
  const godMode=difficulty==='God';
- if(godMode)state.money[side].fill(1e9);
+ if(godMode&&!(state.spectator&&state.resourceOverrides?.[side]))state.money[side].fill(1e9);
  const cfg=botDifficulty(side),own=state.entities.filter(e=>e.side===side),base=own.find(e=>e.type==='castle');if(!base)return;
  const advanced=['Hard','Brutal','Impossible','God'].includes(difficulty);
  const army=own.filter(e=>TYPES[e.type].speed),known=state.explored[side],seen=state.visible[side],enemies=state.entities.filter(e=>e.side===foe&&seen[idx(e.x,e.y)]);
@@ -279,18 +297,18 @@ function save(manual=true){if(state.pvp||state.spectator)return;try{localStorage
 function load(){try{let data=JSON.parse(localStorage.getItem('frontier-v5'));if(!data||data.state.version!==1)return false;const size=data.state.mapSize||Math.sqrt(data.state.terrain.length);if(![50,96,128].includes(size))return false;N=size;SIZE=N*N;drawMini.tmp=null;state=data.state;state.gameMode=state.gameMode==='war'?'war':'classic';nextId=data.nextId;cam=data.cam;recalculate();return true}catch{return false}}
 function toast(msg){$('toast').textContent=msg;$('toast').style.opacity=1;toastUntil=performance.now()+2600}
 
-function wrathActive(){return state?.difficulty==='Wrath'&&!state.pvp}
+function wrathActive(){return (state?.difficulty==='Wrath'||state?.spectator&&state.spectatorStage==='Wrath')&&!state.pvp}
 function wrathTick(){
  if(!wrathActive())return;
- const castle=state.entities.find(e=>e.side===0&&e.type==='castle');
- const base=state.entities.find(e=>e.side===1&&e.type==='castle');
+ const castle=state.entities.find(e=>e.side===challengeSide()&&e.type==='castle');
+ const base=state.entities.find(e=>e.side===challengeEnemy()&&e.type==='castle');
  if(!castle||!base)return;
  const wrath=state.wrath||(state.wrath={wave:0,nextAt:10+rng(state.seed^971)()*5,timingVersion:2});
- state.money[0].fill(1e9);
+ if(!(state.spectator&&state.resourceOverrides?.[challengeSide()]))state.money[challengeSide()].fill(1e9);
  if(!wrath.timingVersion){wrath.nextAt=Math.min(wrath.nextAt,state.time+10);wrath.timingVersion=2}
  wrathGuards(wrath,base);
  wrathPlague(wrath);
- const troops=state.entities.filter(e=>e.side===1&&e.hp>0&&TYPES[e.type].divine);
+ const troops=state.entities.filter(e=>e.side===challengeEnemy()&&e.hp>0&&TYPES[e.type].divine);
  if(state.time>=wrath.nextAt){
   const random=rng(state.seed+wrath.wave*7919+163);
   const type=['godEmissary','godSoldier','godKnight'][wrath.wave%3];
@@ -300,7 +318,7 @@ function wrathTick(){
   const anchor=emissaries.sort((a,b)=>dist(a,castle)-dist(b,castle))[0]||base;
   const cells=[];
   for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(walk(x,y)&&dist({x:x+.5,y:y+.5},anchor)<5)cells.push({x:x+.5,y:y+.5});
-  if(cells.length&&state.entities.filter(e=>e.side===1).length+count+escorts.length<=160){
+  if(cells.length&&state.entities.filter(e=>e.side===challengeEnemy()).length+count+escorts.length<=160){
 cells.sort((a,b)=>dist(a,anchor)-dist(b,anchor));
    let formation=type==='godSoldier'?[]:[cells[0]];
    if(type==='godSoldier'){
@@ -317,8 +335,8 @@ cells.sort((a,b)=>dist(a,anchor)-dist(b,anchor));
     }
    }
    if(formation.length===count){
-    for(const cell of formation)spawn(1,type,cell.x,cell.y);
-    for(const escort of escorts){const cell=formation[0];spawn(1,escort,cell.x,cell.y)}
+    for(const cell of formation)spawn(challengeEnemy(),type,cell.x,cell.y);
+    for(const escort of escorts){const cell=formation[0];spawn(challengeEnemy(),escort,cell.x,cell.y)}
     event(type==='godSoldier'?'Thirty Soldiers of the God enter the darkness.':TYPES[type].name+' enters the darkness.');
    }
   }
@@ -327,13 +345,13 @@ cells.sort((a,b)=>dist(a,anchor)-dist(b,anchor));
  const distance=new Int16Array(SIZE).fill(-1),queue=[idx(castle.x,castle.y)];
  distance[queue[0]]=0;
  for(let n=0;n<queue.length;n++){const i=queue[n],x=i%N,y=i/N|0;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy,j=idx(a,b);if(walk(a,b)&&distance[j]<0){distance[j]=distance[i]+1;queue.push(j)}}}
- for(const unit of state.entities.filter(e=>e.side===1&&e.hp>0&&TYPES[e.type].divine&&e.type!=='godGuard')){
+ for(const unit of state.entities.filter(e=>e.side===challengeEnemy()&&e.hp>0&&TYPES[e.type].divine&&e.type!=='godGuard')){
   if(unit.type==='godEmissary'){
    const claims=state.wrathClaims||(state.wrathClaims={});
    flood(unit.x,unit.y,TYPES[unit.type].claim,i=>{claims[i]=1;if(state.wrathReclaimed)delete state.wrathReclaimed[i]});
   }
   if(unit.type==='godEmissary'){
-   const decoy=state.entities.filter(e=>e.side===0&&TYPES[e.type].speed>0&&e.hp>0&&dist(unit,e)<=8).sort((a,b)=>dist(unit,a)-dist(unit,b)||a.id-b.id)[0];
+   const decoy=state.entities.filter(e=>e.side===challengeSide()&&TYPES[e.type].speed>0&&e.hp>0&&dist(unit,e)<=8).sort((a,b)=>dist(unit,a)-dist(unit,b)||a.id-b.id)[0];
    if(decoy){
     unit.wrathLured=true;
     if(dist(unit,decoy)<=TYPES.godEmissary.range){unit.path=[];unit.goal={x:decoy.x,y:decoy.y};continue}
@@ -355,13 +373,13 @@ function wrathGuards(wrath,base){
  const respawns=wrath.guardRespawns||(wrath.guardRespawns={});
  offsets.forEach(([dx,dy],slot)=>{
   const home={x:base.x+dx,y:base.y+dy};
-  let guard=state.entities.find(e=>e.type==='godGuard'&&e.side===1&&e.guardSlot===slot&&e.hp>0);
+  let guard=state.entities.find(e=>e.type==='godGuard'&&e.side===challengeEnemy()&&e.guardSlot===slot&&e.hp>0);
   if(!guard){
    if(respawns[slot]===undefined)respawns[slot]=wrath.guardsInitialized?state.time+3:state.time;
    if(state.time<respawns[slot]||!walk(home.x,home.y))return;
-   guard=spawn(1,'godGuard',home.x,home.y);guard.guardSlot=slot;delete respawns[slot];
+   guard=spawn(challengeEnemy(),'godGuard',home.x,home.y);guard.guardSlot=slot;delete respawns[slot];
   }
-  const target=state.entities.filter(e=>e.side===0&&e.hp>0&&dist(e,guard)<=5).sort((a,b)=>dist(a,guard)-dist(b,guard))[0];
+  const target=state.entities.filter(e=>e.side===challengeSide()&&e.hp>0&&dist(e,guard)<=5).sort((a,b)=>dist(a,guard)-dist(b,guard))[0];
   const destination=target||home;
   if(!target&&dist(guard,home)<.2){guard.path=[];guard.goal=null;return}
   if(state.time>=(guard.guardOrderAt||0)){
@@ -376,7 +394,7 @@ function wrathPlague(wrath){
  while(wrath.plagueSecond<second){
   wrath.plagueSecond++;
   const random=rng(state.seed+wrath.plagueSecond*104729+701);
-  const soldiers=state.entities.filter(e=>e.side===0&&e.hp>0&&TYPES[e.type].speed>0).sort((a,b)=>a.id-b.id);
+  const soldiers=state.entities.filter(e=>e.side===challengeSide()&&e.hp>0&&TYPES[e.type].speed>0).sort((a,b)=>a.id-b.id);
   const infected=soldiers.filter(()=>random()<.01);
   const affected=new Set();
   for(const source of infected)for(const soldier of soldiers)if(dist(source,soldier)<=5)affected.add(soldier);
@@ -400,25 +418,38 @@ function spectatorUI(){
  if($('deployCount').parentElement)$('deployCount').parentElement.hidden=active;
  for(const id of ['save','online'])$(id).disabled=active||!!state.pvp;
  if(!active)return;
- $('spectatorTitle').textContent=state.botDifficulties[0]+' (Blue) vs '+state.botDifficulties[1]+' (Red)';
+ $('spectatorTitle').textContent=state.botDifficulties[0]+' (Blue) vs '+state.botDifficulties[1]+' (Red)';$('spectatorStageInfo').textContent=state.spectatorStage&&state.spectatorStage!=='standard'?(state.spectatorStage==='Frosty'?'Exclusive: Frosty Mountains':'Exclusive: The Wrath of the God')+' · '+(challengeSide()===0?'Blue':'Red')+' faces the challenge':'Standard map';$('editBotResources').disabled=state.ended;
  for(const side of [0,1]){
   const own=state.entities.filter(e=>e.side===side),base=own.find(e=>e.type==='castle'),cfg=botDifficulty(side);
-  $('spectatorStats'+side).textContent=(side===0?'Blue':'Red')+' · '+state.botDifficulties[side]+'\nCastle '+Math.ceil(Math.max(0,base?.hp||0))+' / '+TYPES.castle.hp+' HP · '+own.filter(e=>TYPES[e.type].speed).length+' troops\n'+state.sites.filter(n=>n.owner===side).length+' sites · '+Math.round(state.owner.filter(n=>n===side).length/SIZE*100)+'% territory\n'+RES.map((r,k)=>r+': '+Math.floor(state.money[side][k])).join(' · ')+'\nGold income ×'+(cfg.goldIncome??cfg.income).toFixed(2)+' · other resources ×'+cfg.income.toFixed(2)+' · planning every '+cfg.interval.toFixed(2)+'s';
+  $('spectatorStats'+side).textContent=(side===0?'Blue':'Red')+' · '+state.botDifficulties[side]+'\nCastle '+Math.ceil(Math.max(0,base?.hp||0))+' / '+TYPES.castle.hp+' HP · '+own.filter(e=>TYPES[e.type].speed).length+' troops\n'+state.sites.filter(n=>n.owner===side).length+' sites · '+Math.round(state.owner.filter(n=>n===side).length/SIZE*100)+'% territory\n'+RES.map((r,k)=>r+': '+Math.floor(state.money[side][k])).join(' · ')+'\nGold income ×'+(cfg.goldIncome??cfg.income).toFixed(2)+' · other resources ×'+cfg.income.toFixed(2)+' · planning every '+cfg.interval.toFixed(2)+'s'+(state.resourceOverrides?.[side]?'\nCustom resources · automatic refills off':'')+(wrathActive()&&side===challengeEnemy()?'\nDivine wave controller · normal purchasing disabled':'');
  }
  $('status').textContent='SPECTATING · '+state.gameMode.toUpperCase();
 }
 let spectatorWasPaused=true;
-function openSpectatorSetup(){if(window.FrontierNetwork?.active)return;const war=$('spectatorMode').querySelector?.('option[value="war"]');if(war){war.disabled=!window.FrontierCrowns?.hasUnlock('war');if(war.disabled&&$('spectatorMode').value==='war')$('spectatorMode').value='classic'}spectatorWasPaused=paused;paused=true;$('spectatorSetup').showModal();ui()}
+function openSpectatorSetup(){if(window.FrontierNetwork?.active)return;const war=$('spectatorMode').querySelector?.('option[value="war"]');if(war){war.disabled=!window.FrontierCrowns?.hasUnlock('war');if(war.disabled&&$('spectatorMode').value==='war')$('spectatorMode').value='classic'}syncSpectatorStage();spectatorWasPaused=paused;paused=true;$('spectatorSetup').showModal();ui()}
 function startSpectator(){
  if(window.FrontierNetwork?.active)return;
  if($('spectatorMode').value==='war'&&!window.FrontierCrowns?.hasUnlock('war')){toast('Unlock War in the Crown Shop first.');return}
  if(started&&!state.spectator&&!state.ended)save(false);
  const raw=$('spectatorSeed').value.trim(),seed=raw===''?Date.now()>>>0:Number(raw);
  if(!Number.isInteger(seed)||seed<0||seed>4294967295){$('spectatorMessage').textContent='Map seed must be a whole number from 0 to 4294967295.';return}
- try{makeBotMatch(seed,$('spectatorBlue').value,$('spectatorRed').value,$('spectatorMode').value)}catch(e){$('spectatorMessage').textContent=e.message;return}
+ try{const stage=$('spectatorStage').value;if(stage!=='standard'&&$('spectatorStage').querySelector?.('option[value="'+stage+'"]')?.disabled)throw Error('Enable this stage in the admin panel first.');makeBotMatch(seed,$('spectatorBlue').value,$('spectatorRed').value,$('spectatorMode').value,{stage,challengeSide:Number($('spectatorChallengeSide').value),resources:[0,1].map(side=>$('customStart'+side).checked?RES.map((_,k)=>Number($('startResource'+side+k).value)):null)})}catch(e){$('spectatorMessage').textContent=e.message;return}
  started=true;paused=false;acc=0;selected.clear();mode=null;cam={x:N/2,y:N/2,z:Math.max(5,Math.min(14,Math.min(width,height)/N*.9))};
  $('spectatorView').value='all';$('crownReward').textContent='Spectator matches do not award Crowns.';$('retryCrownReward').hidden=true;$('spectatorSetup').close();$('intro').close();$('ending').close();$('spectatorMessage').textContent='';catalog();ui();toast('Both bots control their own armies. Drag or use the minimap to explore.');
 }
+
+function syncSpectatorStage(){const select=$('spectatorStage');const chosen=select.querySelector?.('option:checked');if(chosen?.disabled)select.value='standard';$('spectatorChallengeLabel').hidden=select.value==='standard';$('spectatorStageNote').textContent=select.value==='Wrath'?'Wrath keeps its original divine waves, permanent claims, Plague and unlimited challenged-side budget. The opposing side uses waves instead of normal bot purchases. Custom resources disable automatic refills but do not change free wave spawns.':select.value==='Frosty'?'Both bots play normally. The challenged bot faces snow slowdown, coldness and freezing attacks; the other bot is cold-immune. Existing Frosty enemies are unchanged.':'Both bots play normally on the standard map.'}
+$('spectatorStage').onchange=syncSpectatorStage;
+for(const side of [0,1])$('customStart'+side).onchange=()=>{for(let k=0;k<4;k++)$('startResource'+side+k).disabled=!$('customStart'+side).checked};
+let resourceWasPaused=true;
+function fillResourceEditor(){const side=Number($('resourceEditSide').value);for(let k=0;k<4;k++)$('editResource'+k).value=$('resourceEditOperation').value==='add'?0:Math.floor(state.money[side][k]);$('resourceEditMessage').textContent='';$('restoreBotResources').disabled=!state.resourceOverrides?.[side]}
+$('editBotResources').onclick=()=>{if(!state.spectator||state.ended)return;resourceWasPaused=paused;paused=true;$('resourceEditSide').value='0';$('resourceEditOperation').value='set';fillResourceEditor();$('spectatorResourceEditor').showModal();ui()};
+$('resourceEditSide').onchange=$('resourceEditOperation').onchange=fillResourceEditor;
+function closeResourceEditor(){$('spectatorResourceEditor').close();paused=resourceWasPaused;ui()}
+$('cancelBotResources').onclick=closeResourceEditor;$('spectatorResourceEditor').addEventListener('cancel',()=>{paused=resourceWasPaused;ui()});
+$('applyBotResources').onclick=()=>{const values=RES.map((_,k)=>Number($('editResource'+k).value));if(!setSpectatorResources(Number($('resourceEditSide').value),values,$('resourceEditOperation').value)){$('resourceEditMessage').textContent='Use four whole numbers from 0 to 1000000000. Resulting balances must stay within that range. Changes are only allowed during a spectator match.';return}closeResourceEditor()};
+$('restoreBotResources').onclick=()=>{if(restoreSpectatorResources(Number($('resourceEditSide').value))){$('restoreBotResources').disabled=true;$('resourceEditMessage').textContent='Automatic rules restored. Infinite refills, where applicable, resume when the match runs.';ui()}};
+
 $('watchBots').onclick=openSpectatorSetup;$('newBotMatch').onclick=openSpectatorSetup;$('startSpectator').onclick=startSpectator;
 $('cancelSpectator').onclick=()=>{$('spectatorSetup').close();paused=spectatorWasPaused;ui()};
 $('spectatorSetup').addEventListener('cancel',()=>{paused=spectatorWasPaused;ui()});
@@ -435,7 +466,7 @@ function draw(){if(!state)return;const hx=width/2/cam.z,hy=height/2/cam.z;cam.x=
  for(const id of selected){let e=state.entities.find(e=>e.id===id);if(e&&e.goal&&!wrathActive()){let p=screen(e.x,e.y),g=screen(e.goal.x,e.goal.y);ctx.strokeStyle='#c9dc8c77';ctx.setLineDash([4,5]);ctx.beginPath();ctx.moveTo(p.x,p.y);for(const node of e.path){let q=screen(node.x,node.y);ctx.lineTo(q.x,q.y)}ctx.stroke();ctx.setLineDash([]);ctx.strokeRect(g.x-4,g.y-4,8,8)}}if(wrathActive()){const phase=Math.floor(state.time*7);ctx.fillStyle='#dccbff';for(let n=0;n<28;n++){const random=rng(state.seed+phase*1237+n*31),x=Math.floor(random()*N),y=Math.floor(random()*N);if(!vis[idx(x,y)]){const p=screen(x+.5,y+.5);ctx.globalAlpha=.15+random()*.55;ctx.fillRect(p.x-1,p.y-3,2,6);ctx.fillRect(p.x-3,p.y-1,6,2)}}ctx.globalAlpha=1}drawMini();}
 function drawTerrainFeature(feature,p,z){const style=window.FrontierAppearance?.style;if(feature===1&&z>=8&&style==='parchment'){ctx.fillStyle='#685034';ctx.fillRect(p.x+z*.46,p.y+z*.42,z*.1,z*.46);ctx.fillStyle='#547044';for(const [x,y,r]of [[.35,.4,.25],[.65,.4,.25],[.5,.23,.23]]){ctx.beginPath();ctx.arc(p.x+x*z,p.y+y*z,r*z,0,Math.PI*2);ctx.fill()}return}if(feature===1&&z>=8&&style==='slate'){ctx.fillStyle='#547982';for(const x of [.3,.7]){ctx.beginPath();ctx.moveTo(p.x+x*z,p.y+z*.1);ctx.lineTo(p.x+(x+.18)*z,p.y+z*.5);ctx.lineTo(p.x+x*z,p.y+z*.88);ctx.lineTo(p.x+(x-.18)*z,p.y+z*.5);ctx.fill()}return}
 if(feature===1&&z>=8){ctx.fillStyle='#10241e66';ctx.beginPath();ctx.ellipse(p.x+z*.55,p.y+z*.83,z*.4,z*.14,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#26543a';for(const dx of [.28,.68]){ctx.beginPath();ctx.moveTo(p.x+z*(dx-.2),p.y+z*.8);ctx.lineTo(p.x+z*dx,p.y+z*.15);ctx.lineTo(p.x+z*(dx+.2),p.y+z*.8);ctx.fill()}}else if(feature===2){ctx.fillStyle='#88c5c960';ctx.fillRect(p.x+z*.15,p.y+z*.32,z*.55,Math.max(1,z*.045));ctx.fillRect(p.x+z*.38,p.y+z*.7,z*.5,Math.max(1,z*.035))}else if(feature===3){ctx.fillStyle='#a88e62';ctx.fillRect(p.x,p.y+z*.12,z,z*.76);ctx.strokeStyle='#534c38';ctx.lineWidth=1;for(let k=1;k<4;k++){ctx.beginPath();ctx.moveTo(p.x+z*k/4,p.y+z*.12);ctx.lineTo(p.x+z*k/4,p.y+z*.88);ctx.stroke()}}else if(feature===4&&z>9){ctx.fillStyle='#9b9b7944';ctx.fillRect(p.x+z*.2,p.y+z*.25,z*.25,z*.18);ctx.fillRect(p.x+z*.6,p.y+z*.65,z*.2,z*.15)}}
-function drawEntity(e,alpha){const blend=state.pvp&&e.renderFrom?Math.min(1,Math.max(0,(performance.now()-e.renderAt)/500)):1,drawX=e.renderFrom?e.renderFrom.x+(e.x-e.renderFrom.x)*blend:e.x,drawY=e.renderFrom?e.renderFrom.y+(e.y-e.renderFrom.y)*blend:e.y;let p=screen(drawX,drawY),t=TYPES[e.type],z=cam.z;if(p.x< -50||p.y< -50||p.x>width+50||p.y>height+50)return;ctx.globalAlpha=alpha;const color=t.divine?'#d6b6ff':e.side===0?(window.FrontierShop?.color(window.FrontierAppearance?.friendlyColor||'#8cc5df')||window.FrontierAppearance?.friendlyColor||'#8cc5df'):(window.FrontierAppearance?.enemyColor||'#e69883');if(selected.has(e.id)){ctx.strokeStyle='#d6eaa0';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,z*.65,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#0005';ctx.beginPath();ctx.ellipse(p.x,p.y+z*.25,z*.45,z*.23,0,0,Math.PI*2);ctx.fill();const design=window.FrontierAppearance?.unitDesign||'classic';ctx.fillStyle=color;if(design!=='classic'){drawArmyToken(e,p,z,color,design)}else if(t.speed){ctx.fillRect(p.x-z*.22,p.y-z*.17,z*.44,z*.47);ctx.fillStyle='#e1d9b8';ctx.fillRect(p.x-z*.16,p.y-z*.43,z*.32,z*.26);if(e.type==='banner'){ctx.fillStyle='#c9dc8c';ctx.fillRect(p.x+z*.3,p.y-z*.8,z*.4,z*.3);ctx.fillRect(p.x+z*.27,p.y-z*.8,z*.06,z)}}else{let size=e.type==='castle'?1.5:.85;ctx.fillRect(p.x-z*size/2,p.y-z*size/2,z*size,z*size);ctx.fillStyle='#1c2c29';ctx.fillRect(p.x-z*.12,p.y,z*.24,z*.4);for(let k=-1;k<=1;k++){ctx.fillStyle=color;ctx.fillRect(p.x+k*z*.35-z*.12,p.y-z*size/2-z*.2,z*.24,z*.25)}}if(design==='classic')drawEquipment(t.divine?{...e,type:e.type==='godKnight'?'knight':e.type==='godEmissary'?'mage':e.type==='godArcher'?'archer':e.type==='godCannoneer'?'cannoneer':e.type==='godGuard'?'knight':'soldier'}:e,p,z,color);window.FrontierShop?.draw(ctx,e,p,z);if(window.FrontierAppearance?.style==='slate'){ctx.strokeStyle=color;ctx.lineWidth=Math.max(1,z*.08);ctx.beginPath();const r=z*(t.speed?.5:.72);for(let k=0;k<6;k++){const angle=k*Math.PI/3,q={x:p.x+Math.cos(angle)*r,y:p.y+Math.sin(angle)*r};if(!k)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y)}ctx.closePath();ctx.stroke()}else if(window.FrontierAppearance?.style==='parchment'&&!t.speed){ctx.fillStyle=e.side===0?'#426c81':'#9c5d47';ctx.beginPath();ctx.moveTo(p.x-z*.6,p.y-z*.4);ctx.lineTo(p.x,p.y-z*.95);ctx.lineTo(p.x+z*.6,p.y-z*.4);ctx.fill()}if(z>=12){ctx.fillStyle=e.side===0?'#d8eef2':'#ffe0cf';ctx.font=`bold ${Math.max(9,z*.4)}px monospace`;ctx.textAlign='center';ctx.fillText(e.type==='castle'?'♛':(t.mark||e.type[0].toUpperCase()),p.x,p.y-z*.65)}if(frostyActive()&&e.side===0){if(e.frozen>0){ctx.strokeStyle='#bdedff';ctx.lineWidth=2;ctx.strokeRect(p.x-z*.42,p.y-z*.5,z*.84,z)}if(e.cold||e.frostUnsupplied){ctx.fillStyle='#b6e5ff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(e.frostUnsupplied?'NO SUPPLY':'COLD',p.x,p.y+z*1.05)}}if(e.hp<t.hp||selected.has(e.id)){ctx.fillStyle='#101814';ctx.fillRect(p.x-z*.5,p.y+z*.55,z,3);ctx.fillStyle=e.side===0?'#abd78d':'#dd8376';ctx.fillRect(p.x-z*.5,p.y+z*.55,z*Math.max(0,e.hp/t.hp),3)}if(!t.speed&&!e.supplied){ctx.fillStyle='#f1bd64';ctx.fillText('!',p.x+z*.5,p.y)}ctx.globalAlpha=1}
+function drawEntity(e,alpha){const blend=state.pvp&&e.renderFrom?Math.min(1,Math.max(0,(performance.now()-e.renderAt)/500)):1,drawX=e.renderFrom?e.renderFrom.x+(e.x-e.renderFrom.x)*blend:e.x,drawY=e.renderFrom?e.renderFrom.y+(e.y-e.renderFrom.y)*blend:e.y;let p=screen(drawX,drawY),t=TYPES[e.type],z=cam.z;if(p.x< -50||p.y< -50||p.x>width+50||p.y>height+50)return;ctx.globalAlpha=alpha;const color=t.divine?'#d6b6ff':e.side===0?(window.FrontierShop?.color(window.FrontierAppearance?.friendlyColor||'#8cc5df')||window.FrontierAppearance?.friendlyColor||'#8cc5df'):(window.FrontierAppearance?.enemyColor||'#e69883');if(selected.has(e.id)){ctx.strokeStyle='#d6eaa0';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,z*.65,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#0005';ctx.beginPath();ctx.ellipse(p.x,p.y+z*.25,z*.45,z*.23,0,0,Math.PI*2);ctx.fill();const design=window.FrontierAppearance?.unitDesign||'classic';ctx.fillStyle=color;if(design!=='classic'){drawArmyToken(e,p,z,color,design)}else if(t.speed){ctx.fillRect(p.x-z*.22,p.y-z*.17,z*.44,z*.47);ctx.fillStyle='#e1d9b8';ctx.fillRect(p.x-z*.16,p.y-z*.43,z*.32,z*.26);if(e.type==='banner'){ctx.fillStyle='#c9dc8c';ctx.fillRect(p.x+z*.3,p.y-z*.8,z*.4,z*.3);ctx.fillRect(p.x+z*.27,p.y-z*.8,z*.06,z)}}else{let size=e.type==='castle'?1.5:.85;ctx.fillRect(p.x-z*size/2,p.y-z*size/2,z*size,z*size);ctx.fillStyle='#1c2c29';ctx.fillRect(p.x-z*.12,p.y,z*.24,z*.4);for(let k=-1;k<=1;k++){ctx.fillStyle=color;ctx.fillRect(p.x+k*z*.35-z*.12,p.y-z*size/2-z*.2,z*.24,z*.25)}}if(design==='classic')drawEquipment(t.divine?{...e,type:e.type==='godKnight'?'knight':e.type==='godEmissary'?'mage':e.type==='godArcher'?'archer':e.type==='godCannoneer'?'cannoneer':e.type==='godGuard'?'knight':'soldier'}:e,p,z,color);window.FrontierShop?.draw(ctx,e,p,z);if(window.FrontierAppearance?.style==='slate'){ctx.strokeStyle=color;ctx.lineWidth=Math.max(1,z*.08);ctx.beginPath();const r=z*(t.speed?.5:.72);for(let k=0;k<6;k++){const angle=k*Math.PI/3,q={x:p.x+Math.cos(angle)*r,y:p.y+Math.sin(angle)*r};if(!k)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y)}ctx.closePath();ctx.stroke()}else if(window.FrontierAppearance?.style==='parchment'&&!t.speed){ctx.fillStyle=e.side===0?'#426c81':'#9c5d47';ctx.beginPath();ctx.moveTo(p.x-z*.6,p.y-z*.4);ctx.lineTo(p.x,p.y-z*.95);ctx.lineTo(p.x+z*.6,p.y-z*.4);ctx.fill()}if(z>=12){ctx.fillStyle=e.side===0?'#d8eef2':'#ffe0cf';ctx.font=`bold ${Math.max(9,z*.4)}px monospace`;ctx.textAlign='center';ctx.fillText(e.type==='castle'?'♛':(t.mark||e.type[0].toUpperCase()),p.x,p.y-z*.65)}if(frostyActive()&&e.side===challengeSide()){if(e.frozen>0){ctx.strokeStyle='#bdedff';ctx.lineWidth=2;ctx.strokeRect(p.x-z*.42,p.y-z*.5,z*.84,z)}if(e.cold||e.frostUnsupplied){ctx.fillStyle='#b6e5ff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(e.frostUnsupplied?'NO SUPPLY':'COLD',p.x,p.y+z*1.05)}}if(e.hp<t.hp||selected.has(e.id)){ctx.fillStyle='#101814';ctx.fillRect(p.x-z*.5,p.y+z*.55,z,3);ctx.fillStyle=e.side===0?'#abd78d':'#dd8376';ctx.fillRect(p.x-z*.5,p.y+z*.55,z*Math.max(0,e.hp/t.hp),3)}if(!t.speed&&!e.supplied){ctx.fillStyle='#f1bd64';ctx.fillText('!',p.x+z*.5,p.y)}ctx.globalAlpha=1}
 function drawArmyToken(e,p,z,color,design){
  const t=TYPES[e.type],r=z*(t.speed?.48:e.type==='castle'?.9:.65);ctx.fillStyle=color;ctx.strokeStyle='#101e20';ctx.lineWidth=Math.max(1,z*.07);ctx.beginPath();
  if(design==='heraldic'){ctx.moveTo(p.x-r,p.y-r);ctx.lineTo(p.x+r,p.y-r);ctx.lineTo(p.x+r*.85,p.y+r*.25);ctx.lineTo(p.x,p.y+r);ctx.lineTo(p.x-r*.85,p.y+r*.25);ctx.closePath()}
@@ -484,6 +515,6 @@ $('holdOrder').onclick=()=>{command(0,{kind:'hold',ids:[...selected]});ui()};
 $('titleScreen').onclick=()=>{if(state.pvp){$('lobby').showModal();toast('Leave the online match before returning to the title screen');return}if(!state.ended)save(false);paused=true;started=false;mode=null;selected.clear();try{$('continue').disabled=!localStorage.getItem('frontier-v5')}catch{$('continue').disabled=true}$('intro').showModal();ui()};$('start').onclick=()=>begin(false);$('continue').onclick=()=>begin(true);makeGame(731045);catalog();ui();$('intro').showModal();try{$('continue').disabled=!localStorage.getItem('frontier-v5')}catch{$('continue').disabled=true}
 let soloSpeed=1;$('soloSpeed').oninput=()=>{const value=Number($('soloSpeed').value);soloSpeed=Number.isFinite(value)?Math.max(.25,Math.min(5,value)):1;$('speedValue').textContent=soloSpeed+'×'};let last=performance.now();function frame(now){let dt=Math.min(.15,(now-last)/1000);last=now;if(started&&!$('guide').open){let speed=400/cam.z*dt;if(keys.w||keys.arrowup)cam.y-=speed;if(keys.s||keys.arrowdown)cam.y+=speed;if(keys.a||keys.arrowleft)cam.x-=speed;if(keys.d||keys.arrowright)cam.x+=speed;cam.x=Math.max(0,Math.min(N,cam.x));cam.y=Math.max(0,Math.min(N,cam.y));if(!paused&&!window.FrontierNetwork?.active){acc+=dt*soloSpeed;while(acc>=.1){tick(.1);acc-=.1}}}if(now>toastUntil)$('toast').style.opacity=0;if(now-lastUI>300){ui();lastUI=now}draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
 // Exposed for deterministic simulation verification, not required by the renderer.
-window.Frontier={makeGame,makeBotMatch,tick,command,recalculate,pathfind,get state(){return state},TYPES,
+window.Frontier={makeGame,makeBotMatch,setSpectatorResources,restoreSpectatorResources,tick,command,recalculate,pathfind,get state(){return state},TYPES,
  receive(snapshot){const first=!state.pvp,previous=new Map(state.entities.map(e=>[e.id,e])),now=performance.now();for(const e of snapshot.entities){const old=previous.get(e.id);if(old&&!first){const blend=old.renderFrom?Math.min(1,Math.max(0,(now-old.renderAt)/500)):1;e.renderFrom={x:old.renderFrom?old.renderFrom.x+(old.x-old.renderFrom.x)*blend:old.x,y:old.renderFrom?old.renderFrom.y+(old.y-old.renderFrom.y)*blend:old.y};e.renderAt=now}}if(snapshot.unitStats)for(const [k,v]of Object.entries(snapshot.unitStats))if(TYPES[k])Object.assign(TYPES[k],v);state=snapshot;N=state.mapSize;SIZE=N*N;started=true;paused=false;$('intro').close();$('pause').disabled=true;$('save').disabled=true;$('mapDimensions').textContent=N+' × '+N+' · ONLINE MATCH';if(first){$('lobby')?.close();drawMini.tmp=null;selected.clear();home();catalog()}ui();if(state.ended&&!$('ending').open){$('result').textContent=state.winner===-1?'Draw.':state.winner===0?'Victory.':'Your crown has fallen.';$('resultText').textContent='Online match complete.';$('ending').showModal();window.FrontierCrowns?.awardPvPResult(state)}}
 };
