@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const storageKey = 'frontier-crowns-v1';
+  const storageKey = 'frontier-v6-crowns-v1';
   const silverRewards = Object.freeze({Easy: 1, Normal: 10, Hard: 75, Brutal: 300, Impossible: 1200, God: 6000, Wrath: 3000});
   const items = Object.freeze({
     war:{name:'War mode',kind:'mode',price:500},
@@ -99,7 +99,7 @@
   function awardPvPResult(state) {
     if (!state.pvp || !state.ended || ![0, 1].includes(state.winner)) return Promise.resolve();
     let room;
-    try { room = sessionStorage.getItem('frontier-room'); } catch { return Promise.resolve(); }
+    try { room = sessionStorage.getItem('frontier-v6-room'); } catch { return Promise.resolve(); }
     if (!room || !/^[A-F0-9]{8}$/.test(room)) return Promise.resolve();
     return saveReward({id: 'pvp-' + room, currency: 'gold', amount: state.winner === 0 ? 30 : 10});
   }

@@ -47,7 +47,7 @@
    e.preventDefault();e.stopImmediatePropagation();open();status.textContent='Unlock War for 500 Silver Crowns to start this mode.';
   }
  },true);
- window.addEventListener('storage',e=>{if(e.key==='frontier-crowns-v1')sync()});
+ window.addEventListener('storage',e=>{if(e.key==='frontier-v6-crowns-v1')sync()});
  window.FrontierShop={open,color:fallback=>api.items[equipped.palette]?.color||fallback,
  draw(ctx,e,p,z){
   if(e.side!==0)return;
